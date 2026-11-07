@@ -15,15 +15,18 @@
 
 import datetime
 import math
+import sys
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.properties import PageSetupProperties
+from openpyxl.worksheet.pagebreak import Break
 from openpyxl.workbook.defined_name import DefinedName
 
-OUT = "IMS_Management_Review_FA_v1.xlsx"
+DEMO = "--demo" in sys.argv
+OUT = "IMS_Management_Review_FA_v1_Demo.xlsx" if DEMO else "IMS_Management_Review_FA_v1.xlsx"
 
 S1 = "1-جلسه و تنظیمات"
 S2 = "2-ورودی‌ها"
@@ -43,6 +46,7 @@ GREY = "F2F2F2"
 GREEN = "E2EFDA"
 RED = "FCE4E4"
 AMBER = "FFF2CC"
+LAVENDER = "E9E3F8"
 
 THIN = Side(style="thin", color="BFBFBF")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
@@ -133,6 +137,7 @@ def autofit_rows(ws, rows, col_specs, pad=4, min_h=18, max_h=230):
             lines = sum(max(1, math.ceil(len(seg) / cpl)) for seg in v.split("\n"))
             need = max(need, lines * line_h.get(size, 12.2) + pad)
         ws.row_dimensions[r].height = min(max_h, round(need, 1))
+
 
 
 wb = Workbook()
@@ -339,7 +344,7 @@ ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=6)
 ws.cell(row=r, column=4).border = BORDER
 
 METRICS = [
-    ("تعداد ورودی‌های الزامی تعریف‌شده", f"=COUNTA('{S2}'!$B$5:$B$33)", "0", "برگه ۲ – همیشه 29 ورودی"),
+    ("تعداد ورودی‌های الزامی تعریف‌شده", f'=COUNTIF(\'{S2}\'!$B$5:$B$33,"?*")', "0", "برگه ۲ – همیشه 29 ورودی"),
     ("ورودی‌های دارای نتیجه بررسی", f'=COUNTIF(\'{S2}\'!$H$5:$H$33,"?*")', "0", "ستون «نتیجه بررسی» تکمیل شده"),
     ("درصد پوشش ورودی‌ها", None, "0%", "باید پیش از جلسه 100% شود"),
     ("ورودی‌های ناقص یا ارائه‌نشده", f'=COUNTIF(\'{S2}\'!$G$5:$G$33,"ناقص")+COUNTIF(\'{S2}\'!$G$5:$G$33,"ارائه نشد")', "0", "اقدام پیش از جلسه"),
@@ -351,6 +356,7 @@ METRICS = [
     ("مصوبات با اثربخشی تأییدشده", f'=COUNTIF(\'{S3}\'!$N$5:$N$44,"اثربخش")+COUNTIF(\'{S3}\'!$N$5:$N$44,"نسبتاً اثربخش")', "0", None),
     ("تصمیم «نیاز به اقدام نیست» با توجیه", f'=COUNTIF(\'{S3}\'!$L$5:$L$44,"نیاز به اقدام نیست")', "0", "ستون توجیه باید پر باشد"),
     ("تعداد پایش‌های ثبت‌شده", f'=COUNTIF(\'{S4}\'!$B$5:$B$44,"?*")', "0", "برگه ۴"),
+    ("شاخص تکمیل فایل (۰ تا ۱۰۰)", "__COMPLETENESS__", "0", "ورودی + تصمیم + مسئول + مهلت + پایش"),
 ]
 
 metric_rows = {}
@@ -368,6 +374,16 @@ for i, (label, formula, numfmt, note) in enumerate(METRICS):
     c.font = Font(name=FONT_NAME, size=9, bold=True)
     c.alignment = align("center")
     c.number_format = numfmt
+    if formula == "__COMPLETENESS__":
+        dn = (f'MAX(COUNTIF(\'{S3}\'!$B$5:$B$44,"?*"),COUNTIF(\'{S3}\'!$H$5:$H$44,"?*"))')
+        formula = (
+            "=MIN(100,ROUND(100*("
+            f"COUNTIF('{S2}'!$H$5:$H$33,\"?*\")"
+            f"+COUNTIF('{S3}'!$H$5:$H$44,\"?*\")"
+            f"+COUNTIF('{S3}'!$I$5:$I$44,\"?*\")"
+            f"+COUNT('{S3}'!$K$5:$K$44)"
+            f"+COUNTIF('{S4}'!$B$5:$B$44,\"?*\")"
+            f")/(29+4*{dn}),0))")
     if formula:
         c.value = formula
     ws.merge_cells(start_row=rr, start_column=4, end_row=rr, end_column=6)
@@ -388,12 +404,13 @@ ws1.cell(row=metric_rows["درصد اجرای مصوبات"], column=3).value = 
     f"=IF(C{row_decisions}=0,0,C{row_done}/C{row_decisions})")
 
 # رنگ‌ها و قواعد
-r = 58
+r = max(metric_rows.values()) + 2
 section(ws, f"A{r}:F{r}", "۵) علامت‌گذاری رنگ‌ها و قواعد تکمیل")
 legend = [
     ("سلول زرد", "ورود دستی اطلاعات؛ توسط تیم تهیه تکمیل شود.", YELLOW),
     ("سلول آبی روشن", "فرمول خودکار؛ تغییر داده نشود.", BLUE_CALC),
     ("سلول خاکستری", "عنوان یا برچسب ثابت فرم.", GREY),
+    ("سلول بنفش روشن", "داده آموزشی نسخه نمایشی؛ در فایل عملیاتی وجود ندارد و باید با داده واقعی جایگزین شود.", LAVENDER),
 ]
 rr = r + 1
 for text, desc, color in legend:
@@ -422,7 +439,7 @@ for text in rules:
     rr += 1
 
 # نمونه آموزشی
-r = 66
+r = rr + 1
 section(ws, f"A{r}:F{r}", "۶) نمونه نگارش (صرفاً آموزشی و غیرواقعی – در فایل عملیاتی باید بازنویسی یا حذف شود)")
 samples = [
     ("نمونه ورودی", "IN-12 عدم انطباق‌ها و اقدامات اصلاحی",
@@ -450,7 +467,7 @@ for kind, subject, text in samples:
     rr += 1
 
 ws1.freeze_panes = "A6"
-ws1.print_area = "A1:F70"
+ws1.print_area = f"A1:F{rr + 4}"
 ws1.page_setup.orientation = "portrait"
 ws1.page_setup.paperSize = ws1.PAPERSIZE_A4
 ws1.page_setup.fitToWidth = 1
@@ -742,8 +759,8 @@ for col, w in widths3.items():
 title_cell(ws, "A1:P1", "خروجی‌ها و مصوبات بازنگری مدیریت", size=13, height=28)
 title_cell(
     ws, "A2:P2",
-    "9 خروجی الزامی استانداردها از پیش تعریف شده است (OUT-01 تا OUT-09). برای هر موضوع می‌توانید چند مصوبه/اقدام با کد جدید "
-    "اضافه کنید. ستون «ورودی مرتبط» پیوند ردیابی با برگه ۲ را برقرار می‌کند.",
+    "OUT-01 تا OUT-09 خروجی الزامی استانداردها هستند؛ OUT-10 تا OUT-20 موضوعات تصمیم تکمیلی و ردیف‌های بعد آزاد است. "
+    "ستون «ورودی مرتبط» پیوند ردیابی با برگه ۲ را برقرار می‌کند.",
     size=8, color=SUBHEAD, height=26,
 )
 title_cell(
@@ -757,7 +774,7 @@ H3 = [
     ("ردیف", "شماره سطر"),
     ("کد مصوبه", "شناسه ثابت ردیابی"),
     ("دوره", "کد دوره بازنگری"),
-    ("موضوع خروجی (الزام استاندارد)", "9 موضوع الزامی + موارد افزوده"),
+    ("موضوع خروجی (الزام استاندارد)", "9 الزامی + 11 تکمیلی + ردیف آزاد"),
     ("سیستم", "QMS / EMS / OHS / IMS"),
     ("ورودی مرتبط", "کد IN از برگه ۲"),
     ("نتیجه بررسی مدیریت", "جمع‌بندی وضعیت موضوع"),
@@ -801,8 +818,23 @@ OUTPUTS = [
      "45001: 9.3.3 (ابلاغ به کارکنان)"),
 ]
 
+EXTRA_OUTPUTS = [
+    ("OUT-10", "اقدامات لازم برای شکایات، بازخورد و رضایت مشتری", "9001: 9.1.2 و 9.3.2 d) 4"),
+    ("OUT-11", "توسعه، اصلاح یا جایگزینی تأمین‌کنندگان", "9001: 8.4 و 9.3.2 d) 7"),
+    ("OUT-12", "بازنگری اهداف و شاخص‌های عملکرد (KPI)", "9001: 6.2 و 9.3.3"),
+    ("OUT-13", "تغییر خط‌مشی، دامنه یا ساختار سیستم مدیریت", "9001: 5.2 و 6.3"),
+    ("OUT-14", "کاهش حوادث و ارتقای ایمنی و بهداشت شغلی", "45001: 6.1.4 و 8.1.2"),
+    ("OUT-15", "کاهش اثرات محیط‌زیستی و بهبود مصرف انرژی", "14001: 6.1.2 و 6.2"),
+    ("OUT-16", "برنامه انتقال به ویرایش جدید استانداردها", "9001 و 14001: 9.3.2 b)"),
+    ("OUT-17", "توسعه محصول، پروژه‌های جدید و امکان‌سنجی", "9001: 8.3 · IATF: 7.1.3.1"),
+    ("OUT-18", "صلاحیت، آموزش و تأمین نیروی انسانی", "9001: 7.2 و 7.1.2"),
+    ("OUT-19", "سرمایه‌گذاری، تجهیزات، آزمایشگاه و زیرساخت", "9001: 7.1.3 و 7.1.4"),
+    ("OUT-20", "پیگیری مصوبات باز و معوق دوره قبل", "9001 · 14001 · 45001: 9.3.2 a)"),
+]
+
 FIRST3 = 5
 LAST3 = 44
+LAST3_CODED = FIRST3 + len(OUTPUTS) + len(EXTRA_OUTPUTS) - 1
 dv_inputs = DataValidation(type="list", formula1="LIST_INPUTS", allow_blank=True)
 
 for i in range(FIRST3, LAST3 + 1):
@@ -812,8 +844,12 @@ for i in range(FIRST3, LAST3 + 1):
     ws.cell(row=i, column=1).border = BORDER
     ws.cell(row=i, column=1).fill = fill(GREY)
 
-    if idx < len(OUTPUTS):
-        code, system, subject, clause = OUTPUTS[idx]
+    if idx < len(OUTPUTS) + len(EXTRA_OUTPUTS):
+        if idx < len(OUTPUTS):
+            code, system, subject, clause = OUTPUTS[idx]
+        else:
+            code, subject, clause = EXTRA_OUTPUTS[idx - len(OUTPUTS)]
+            system = ""
         c = ws.cell(row=i, column=2, value=code)
         c.font = Font(name=FONT_NAME, size=9, bold=True)
         c.fill = fill(GREY)
@@ -840,17 +876,12 @@ for i in range(FIRST3, LAST3 + 1):
         c.border = BORDER
         c.font = Font(name=FONT_NAME, size=9)
         c.alignment = align("center", "top")
-        for col in (4, 16):
+        for col in (4, 5, 16):
             c = ws.cell(row=i, column=col)
             c.fill = fill(YELLOW)
             c.border = BORDER
             c.font = Font(name=FONT_NAME, size=8)
-            c.alignment = align("right", "top")
-        c = ws.cell(row=i, column=5)
-        c.fill = fill(YELLOW)
-        c.border = BORDER
-        c.font = Font(name=FONT_NAME, size=8)
-        c.alignment = align("center", "top")
+            c.alignment = align("right" if col == 4 else "center", "top")
 
     for col in (3, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15):
         c = ws.cell(row=i, column=col)
@@ -1103,15 +1134,16 @@ m1, m2, m3, m4 = (metric_rows["مصوبات ثبت‌شده"], metric_rows["مص
 ws.merge_cells("A9:G9")
 c = ws["A9"]
 pref = "'" + S1 + "'!C"
-c.value = ('="خلاصه وضعیت مصوبات — ثبت‌شده: "&' + pref + str(m1)
-           + '&"  ·  انجام‌شده: "&' + pref + str(m2)
-           + '&"  ·  باز یا در حال اجرا: "&' + pref + str(m3)
-           + '&"  ·  معوق: "&' + pref + str(m4))
+c.value = ('="خلاصه: مصوبات ثبت‌شده "&' + pref + str(m1)
+           + '&" · انجام‌شده "&' + pref + str(m2)
+           + '&" · باز یا در حال اجرا "&' + pref + str(m3)
+           + '&" · معوق "&' + pref + str(m4)
+           + '&"   |   ورودی‌های بررسی‌شده: "&' + pref + '46&" از "&' + pref + '45')
 c.font = Font(name=FONT_NAME, size=8, bold=True, color=NAVY)
 c.fill = fill(SECTION)
 c.alignment = align("center")
 style_range(ws, "A9:G9", border=True, fill_color=SECTION)
-ws.row_dimensions[9].height = 20
+ws.row_dimensions[9].height = 26
 
 # بخش ۱ – خلاصه ورودی‌ها
 r = 10
@@ -1126,7 +1158,8 @@ for j, (h) in enumerate(["کد", "موضوع ورودی", "نتیجه بررسی
 ws.merge_cells(start_row=r, start_column=3, end_row=r, end_column=4)
 ws.row_dimensions[r].height = 22
 
-MIRROR2 = 12  # تعداد ردیف ورودی در صورت‌جلسه
+MIRROR2 = 29  # همه ورودی‌های الزامی در صورت‌جلسه
+input_rows_5 = []
 for i in range(MIRROR2):
     src = FIRST2 + i
     rr = r + 1 + i
@@ -1152,6 +1185,7 @@ for i in range(MIRROR2):
     c.font = Font(name=FONT_NAME, size=7)
     c.alignment = align("center", "top")
     c.border = BORDER
+    input_rows_5.append(rr)
     c = ws.cell(row=rr, column=7, value=f"=IF('{S2}'!K{src}=\"\",\"\",'{S2}'!K{src})")
     c.font = Font(name=FONT_NAME, size=6)
     c.alignment = align("right", "top")
@@ -1160,8 +1194,9 @@ for i in range(MIRROR2):
 
 r = r + 1 + MIRROR2
 merge_text(ws, f"A{r}:G{r}",
-           "توجه: این جدول 12 ورودی اول را نشان می‌دهد؛ جدول کامل 29 ورودی در برگه ۲ است و بخشی از سند بازنگری محسوب می‌شود.",
+           "این جدول همه 29 ورودی الزامی را نمایش می‌دهد؛ شرح کامل «اطلاعات موردنیاز» و «مستندات» در برگه ۲ است.",
            style="note", height=16)
+page_break_main = r + 1
 
 # بخش ۲ – نتیجه‌گیری
 r += 1
@@ -1192,7 +1227,7 @@ for label, row3, col3 in conclusions:
 
 # بخش ۳ – مصوبات
 r += 2
-section(ws, f"A{r}:G{r}", "۳) مصوبات و تصمیمات (از برگه ۳ – حداکثر 15 مصوبه اول)")
+section(ws, f"A{r}:G{r}", "۳) مصوبات و تصمیمات (از برگه ۳ – 25 مصوبه اول)")
 r += 1
 for j, h in enumerate(["کد مصوبه", "موضوع خروجی", "تصمیم یا مصوبه", "مسئول اجرا", "منابع موردنیاز", "مهلت", "وضعیت"]):
     c = ws.cell(row=r, column=1 + j, value=h)
@@ -1202,7 +1237,8 @@ for j, h in enumerate(["کد مصوبه", "موضوع خروجی", "تصمیم �
     c.border = BORDER
 ws.row_dimensions[r].height = 22
 
-MIRROR3 = 15
+MIRROR3 = 25
+decision_rows_5 = []
 for i in range(MIRROR3):
     src = FIRST3 + i
     rr = r + 1 + i
@@ -1215,10 +1251,12 @@ for i in range(MIRROR3):
         c.border = BORDER
         if fname == "K":
             c.number_format = "yyyy-mm-dd"
+    decision_rows_5.append(rr)
     ws.row_dimensions[rr].height = 32
 merge_text(ws, f"A{r + 1 + MIRROR3}:G{r + 1 + MIRROR3}",
-           "مصوبات بیشتر: ادامه جدول در برگه ۳ (تا ردیف 44). کل برگه ۳ سند رسمی مصوبات است.",
+           "جدول کامل مصوبات (تا ردیف 44) در برگه ۳ نگهداری می‌شود و سند رسمی تصمیم‌ها است.",
            style="note", height=16)
+page_break_decisions = r + 1
 
 # بخش ۴ – امضاها
 r = r + MIRROR3 + 3
@@ -1279,6 +1317,9 @@ ws5.page_setup.paperSize = ws5.PAPERSIZE_A4
 ws5.page_setup.fitToWidth = 1
 ws5.page_setup.fitToHeight = 0
 ws5.print_options.horizontalCentered = True
+ws5.print_title_rows = "1:3"
+ws5.row_breaks.append(Break(id=page_break_main))
+ws5.row_breaks.append(Break(id=page_break_decisions))
 ws5.print_area = f"A1:G{r}"
 ws5.oddFooter.center.text = "صورت‌جلسه بازنگری مدیریت – صفحه &P از &N"
 ws5.oddFooter.center.size = 8
@@ -1289,7 +1330,14 @@ ws5.page_margins.bottom = 0.4
 
 # فهرست‌های کشویی از طریق نام تعریف‌شده (سازگارتر با نسخه‌های مختلف Excel)
 wb.defined_names["LIST_INPUTS"] = DefinedName("LIST_INPUTS", attr_text=f"'{S2}'!$B${FIRST2}:$B${LAST2}")
-wb.defined_names["LIST_OUTPUTS"] = DefinedName("LIST_OUTPUTS", attr_text=f"'{S3}'!$B${FIRST3}:$B${LAST3}")
+wb.defined_names["LIST_OUTPUTS"] = DefinedName(
+    "LIST_OUTPUTS",
+    attr_text=(f"OFFSET('{S3}'!$B${FIRST3},0,0,"
+               f"MAX(1,COUNTA('{S3}'!$B${FIRST3}:$B${LAST3})),1)"))
+wb.defined_names["LIST_INPUTS"] = DefinedName(
+    "LIST_INPUTS",
+    attr_text=(f"OFFSET('{S2}'!$B${FIRST2},0,0,"
+               f"MAX(1,COUNTA('{S2}'!$B${FIRST2}:$B${LAST2})),1)"))
 
 wb.active = 0
 
@@ -1302,14 +1350,198 @@ wb.properties.description = "ورودی‌ها، خروجی‌ها، مصوبا�
 # --- تنظیم ارتفاع سطرها بر پایه طول متن (پیش از ذخیره) ---
 autofit_rows(ws1, range(6, 21), {"B": 9, "E": 8}, min_h=24)
 autofit_rows(ws1, range(37, 41), {"B": 9, "C": 9, "D": 9, "E": 8, "F": 8}, min_h=28)
-autofit_rows(ws1, range(59, 70), {"B": 9, "C": 9}, min_h=18)
+autofit_rows(ws1, range(59, rr + 5), {"B": 9, "C": 9}, min_h=18)
 autofit_rows(ws2, range(5, LAST2 + 1), {"E": 9, "F": 8, "H": 9, "J": 8, "K": 8}, min_h=28)
 autofit_rows(ws3, range(5, LAST3 + 1), {"D": 9, "G": 9, "H": 9, "I": 8, "J": 8, "M": 8, "O": 8, "P": 8}, min_h=28)
 autofit_rows(ws4, range(5, LAST4 + 1), {"I": 8, "J": 8, "O": 8}, min_h=26)
 autofit_rows(ws5, range(5, 9), {"A": 8, "B": 8, "D": 8, "E": 8}, min_h=22)
-autofit_rows(ws5, range(12, 24), {"A": 7, "B": 7, "C": 7, "E": 7, "F": 7, "G": 6}, min_h=26)
-autofit_rows(ws5, range(32, 47), {"A": 7, "B": 7, "C": 7, "D": 7, "E": 7, "G": 7}, min_h=26)
+autofit_rows(ws5, input_rows_5, {"A": 7, "B": 7, "C": 7, "E": 7, "F": 7, "G": 6}, min_h=24)
+autofit_rows(ws5, decision_rows_5, {"A": 7, "B": 7, "C": 7, "D": 7, "E": 7, "G": 7}, min_h=24)
 autofit_rows(ws5, range(26, 29), {"A": 8, "C": 8}, min_h=26)
+
+# ----------------------------------------------------------------------------
+# برگه ۰ – راهنمای استفاده
+# ----------------------------------------------------------------------------
+ws = wb.create_sheet("0-راهنما", 0)
+ws.sheet_view.rightToLeft = True
+ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+for col, w in zip("ABCDE", [6, 26, 46, 30, 22]):
+    ws.column_dimensions[col].width = w
+
+title_cell(ws, "A1:E1", "راهنمای استفاده از فرم بازنگری مدیریت (IMS)", size=15, height=32)
+title_cell(
+    ws, "A2:E2",
+    "راهنما + ۵ برگه فرم · 29 ورودی الزامی · 9 خروجی الزامی · 11 موضوع تصمیم تکمیلی · پایش اثربخشی · صورت‌جلسه قابل چاپ",
+    size=9, color=SUBHEAD, height=20,
+)
+
+r = 4
+section(ws, f"A{r}:E{r}", "۱) مسیر اجرا در ۹ گام")
+r += 1
+for j, h in enumerate(["گام", "اقدام", "شرح و نکته الزامی", "برگه / ستون", "مسئول"]):
+    c = ws.cell(row=r, column=1 + j, value=h)
+    c.font = Font(name=FONT_NAME, size=9, bold=True, color="FFFFFF")
+    c.fill = fill(HEAD)
+    c.alignment = align("center")
+    c.border = BORDER
+ws.row_dimensions[r].height = 22
+
+STEPS = [
+    ("۱", "تعیین دوره و دعوت‌ها",
+     "کد دوره، شماره صورت‌جلسه، تاریخ جلسه، بازه داده‌ها و حاضرین را ثبت کنید. جلسه باید به ریاست مدیریت ارشد باشد (بند 5.1).",
+     "برگه ۱ · B6:D20", "دبیر بازنگری"),
+    ("۲", "تأیید نسخه استاندارد و دامنه",
+     "نسخه معتبر گواهینامه هر استاندارد و مهلت انتقال را ثبت کنید. نسخه جدید استاندارد با نسخه گواهینامه شرکت یکسان نیست.",
+     "برگه ۱ · بخش ۳", "تضمین کیفیت"),
+    ("۳", "تخصیص مالک داده",
+     "برای هر یک از 29 ورودی، مالک داده را از جدول بخش ۳ همین برگه تعیین و مهلت ارسال گزارش را ابلاغ کنید.",
+     "برگه ۰ · بخش ۳ + برگه ۲", "مدیر IMS"),
+    ("۴", "گردآوری و ثبت ورودی‌ها",
+     "برای هر ورودی: وضعیت ارائه، نتیجه بررسی (روند، انحراف، علت) و مستندات مرجع را ثبت کنید. ورودی بدون مصداق را «مصداق ندارد» بزنید؛ خالی گذاشتن پوشش را ناقص می‌کند.",
+     "برگه ۲ · G تا K", "مالک داده"),
+    ("۵", "تصمیم‌گیری مدیریت",
+     "۹ خروجی الزامی از پیش تعریف شده‌اند. تصمیم، مسئول، منابع و مهلت را ثبت کنید. اگر اقدامی لازم نیست، وضعیت «نیاز به اقدام نیست» و دلیل را در ستون توجیه بنویسید.",
+     "برگه ۳ · G تا O", "مدیریت ارشد"),
+    ("۶", "ابلاغ و تخصیص منابع",
+     "منابع (نفر، بودجه، تجهیز) را با مقدار مشخص ثبت کنید؛ تصمیم بدون منبع قابل اجرا نیست. مصوبات ایمنی به کارکنان ابلاغ شود.",
+     "برگه ۳ · J و O", "مدیریت ارشد"),
+    ("۷", "پایش اجرا",
+     "برای هر مصوبه در هر نوبت پایش، درصد پیشرفت، شاهد اجرا و وضعیت را ثبت کنید. ستون «روز تا مهلت» تأخیر را قرمز نشان می‌دهد.",
+     "برگه ۴ · B تا I", "مسئول اجرا"),
+    ("۸", "ارزیابی اثربخشی",
+     "پس از اجرا، معیار سنجش، تاریخ ارزیابی، ارزیاب و شاهد نتیجه را ثبت کنید. ثبت «اثربخش» بدون معیار و شاهد در ممیزی پذیرفته نمی‌شود.",
+     "برگه ۴ · J تا N", "تضمین کیفیت"),
+    ("۹", "چاپ، امضا و نگهداری",
+     "صورت‌جلسه را چاپ و امضا کنید و در سیستم کنترل مستندات ثبت کنید. مصوبات باز، ورودی IN-01 بازنگری بعدی هستند.",
+     "برگه ۵", "دبیر بازنگری"),
+]
+for step in STEPS:
+    r += 1
+    for j, v in enumerate(step):
+        c = ws.cell(row=r, column=1 + j, value=v)
+        c.font = Font(name=FONT_NAME, size=8, bold=(j == 1))
+        c.alignment = align("center" if j == 0 else "right", "top")
+        c.border = BORDER
+        if j == 0:
+            c.fill = fill(GREY)
+    ws.row_dimensions[r].height = 34
+
+r += 2
+section(ws, f"A{r}:E{r}", "۲) مالک داده هر ورودی (تخصیص پیشنهادی – قابل تغییر توسط سازمان)")
+r += 1
+for j, h in enumerate(["کد", "موضوع ورودی", "مالک داده پیشنهادی", "بند استاندارد"]):
+    c = ws.cell(row=r, column=1 + j, value=h)
+    c.font = Font(name=FONT_NAME, size=9, bold=True, color="FFFFFF")
+    c.fill = fill(HEAD)
+    c.alignment = align("center")
+    c.border = BORDER
+ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+ws.row_dimensions[r].height = 20
+
+OWNERS = {
+    "IN-01": "دبیر بازنگری / تضمین کیفیت", "IN-02": "مدیریت ارشد / برنامه‌ریزی",
+    "IN-03": "فروش / مشتری‌یابی", "IN-04": "HSE / حقوقی",
+    "IN-05": "تضمین کیفیت (IMS)", "IN-06": "تضمین کیفیت / مالکان اهداف",
+    "IN-07": "مدیر تولید / مهندسی صنایع", "IN-08": "فروش / خدمات مشتری",
+    "IN-09": "فروش / تضمین کیفیت", "IN-10": "تضمین کیفیت / بازرسی",
+    "IN-11": "آزمایشگاه / HSE", "IN-12": "تضمین کیفیت",
+    "IN-13": "تضمین کیفیت (ممیزی داخلی)", "IN-14": "خرید / تضمین کیفیت تأمین",
+    "IN-15": "مالی / تضمین کیفیت", "IN-16": "تضمین کیفیت / خدمات پس از فروش",
+    "IN-17": "مهندسی (FMEA)", "IN-18": "تضمین کیفیت / مهندسی",
+    "IN-19": "مهندسی / تولید", "IN-20": "نگهداری و تعمیرات",
+    "IN-21": "منابع انسانی / مالی", "IN-22": "مدیر IMS (ریسک)",
+    "IN-23": "مدیر IMS (فرصت)", "IN-24": "تضمین کیفیت / بهبود مستمر",
+    "IN-25": "HSE (محیط‌زیست)", "IN-26": "HSE / تضمین کیفیت",
+    "IN-27": "HSE (ایمنی)", "IN-28": "HSE / منابع انسانی",
+    "IN-29": "HSE / روابط عمومی",
+}
+for code, system, subject, info, clause in INPUTS:
+    r += 1
+    c = ws.cell(row=r, column=1, value=code)
+    c.font = Font(name=FONT_NAME, size=8, bold=True)
+    c.alignment = align("center", "top")
+    c.border = BORDER
+    c.fill = fill(GREY)
+    c = ws.cell(row=r, column=2, value=subject)
+    c.font = Font(name=FONT_NAME, size=8)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    c = ws.cell(row=r, column=3, value=OWNERS.get(code, ""))
+    c.font = Font(name=FONT_NAME, size=8)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    c.fill = fill(YELLOW)
+    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+    c = ws.cell(row=r, column=4, value=clause.split("  ·  ")[0])
+    c.font = Font(name=FONT_NAME, size=7)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    ws.cell(row=r, column=5).border = BORDER
+    ws.row_dimensions[r].height = 18
+
+r += 2
+section(ws, f"A{r}:E{r}", "۳) قواعد تکمیل و خطاهای رایج ممیزی")
+r += 1
+RULES = [
+    ("پوشش کامل ورودی‌ها", "هر 29 ورودی باید «نتیجه بررسی» داشته باشد؛ حتی اگر نتیجه «موردی وجود ندارد» باشد.", "9001 9.3.2 · 14001 9.3.2 · 45001 9.3 · IATF 9.3.2.1"),
+    ("مشارکت مدیریت ارشد", "صورت‌جلسه باید نشان دهد مدیریت ارشد تصمیم گرفته است، نه اینکه گزارشی دریافت کرده باشد.", "9001 9.3.1 · 5.1"),
+    ("تصمیم سنجش‌پذیر", "«بهبود رضایت مشتری» تصمیم نیست؛ «کاهش PPM به زیر 200 تا پایان دوره با مسئول و بودجه مشخص» تصمیم است.", "9.3.3 همه استانداردها"),
+    ("منابع مشخص", "برای هر مصوبه، نوع و مقدار منبع (نفر، ریال، تجهیز) ثبت شود.", "9001 9.3.3 · 14001 9.3.3 c) · 45001 9.3.3"),
+    ("مسئول و مهلت", "هر مصوبه یک مسئول پاسخ‌گو و یک تاریخ مهلت داشته باشد.", "9.3.3 و رویه داخلی"),
+    ("عدم اقدام مستند", "اگر اقدامی لازم نیست، دلیل آن ثبت شود؛ سکوت به‌جای تحلیل، عدم انطباق است.", "9.3.3"),
+    ("اثربخشی واقعی", "بستن اقدام در نرم‌افزار با اثربخشی یکسان نیست؛ شاهد نتیجه و معیار لازم است.", "9001 10.2.1 f) · 45001 10.2"),
+    ("پیوند ورودی و خروجی", "هر مصوبه باید به کد ورودی مرتبط ارجاع دهد تا ردیابی ممکن باشد.", "الزام این فرم"),
+    ("الزامات اختصاصی", "اقلام a تا k بند 9.3.2.1 IATF و جنبه‌های محیط‌زیستی/ایمنی نباید در ادغام حذف شوند.", "IATF 9.3.2.1 · 14001 9.3.2 b)3 · 45001 9.3.2 d)"),
+    ("نگهداری سوابق", "صورت‌جلسه امضاشده، جدول مصوبات و سوابق پایش باید در دسترس و قابل بازیابی باشند.", "9001 9.3.3 · 14001 9.3.3 · 45001 9.3"),
+]
+for i, (title, desc, clause) in enumerate(RULES, start=1):
+    r += 1
+    c = ws.cell(row=r, column=1, value=i)
+    c.font = Font(name=FONT_NAME, size=8, bold=True)
+    c.alignment = align("center", "top")
+    c.border = BORDER
+    c.fill = fill(GREY)
+    c = ws.cell(row=r, column=2, value=title)
+    c.font = Font(name=FONT_NAME, size=8, bold=True)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    c = ws.cell(row=r, column=3, value=desc)
+    c.font = Font(name=FONT_NAME, size=8)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    ws.merge_cells(start_row=r, start_column=4, end_row=r, end_column=5)
+    c = ws.cell(row=r, column=4, value=clause)
+    c.font = Font(name=FONT_NAME, size=7)
+    c.alignment = align("right", "top")
+    c.border = BORDER
+    ws.cell(row=r, column=5).border = BORDER
+    ws.row_dimensions[r].height = 26
+
+r += 2
+section(ws, f"A{r}:E{r}", "۴) نکات فنی فایل")
+NOTES = [
+    "همه برگه‌ها راست‌به‌چپ و آماده چاپ هستند؛ برگه ۲ و ۳ در قطع A3 افقی و برگه ۵ در A4 افقی تنظیم شده‌اند.",
+    "ستون‌های زرد ورود دستی، ستون‌های آبی فرمول خودکار و ستون‌های خاکستری برچسب ثابت هستند.",
+    "فهرست‌های کشویی از فهرست‌های ثابت یا نام‌های تعریف‌شده LIST_INPUTS و LIST_OUTPUTS تغذیه می‌شوند.",
+    "برای دوره جدید: ردیف‌های قبلی را حذف نکنید؛ کد دوره جدید را وارد کنید و مصوبات باز را به‌عنوان IN-01 منتقل کنید.",
+    "محدوده کنترل‌ها: برگه ۲ تا ردیف 33، برگه ۳ و ۴ تا ردیف 44. برای توسعه، فرمول و اعتبارسنجی ردیف آخر را کپی کنید.",
+    "فایل بدون ماکرو است و تاریخ‌ها میلادی هستند؛ محاسبه «روز تا مهلت» بر پایه تاریخ امروز انجام می‌شود.",
+    "این فایل جایگزین قضاوت مدیریت نیست؛ ابزار ثبت و ردیابی الزامات بند 9.3 است.",
+]
+for note in NOTES:
+    r += 1
+    merge_text(ws, f"A{r}:E{r}", "• " + note, height=22)
+
+ws.freeze_panes = "A4"
+ws.page_setup.orientation = "portrait"
+ws.page_setup.paperSize = ws.PAPERSIZE_A4
+ws.page_setup.fitToWidth = 1
+ws.page_setup.fitToHeight = 0
+ws.print_area = f"A1:E{r}"
+ws.oddFooter.center.text = "راهنمای بازنگری مدیریت IMS – صفحه &P از &N"
+ws.oddFooter.center.size = 8
+
+
 
 wb.save(OUT)
 print("saved:", OUT)
